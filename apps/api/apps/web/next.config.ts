@@ -1,11 +1,9 @@
-import type { NextConfig } from 'next';
+import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  ...(process.platform === "win32" ? { distDir: "../../../../../../tmp/rental-vala-next" } : {}),
   images: {
-    remotePatterns: [
-      { protocol: 'https', hostname: 'images.unsplash.com' },
-      { protocol: 'http', hostname: 'localhost' },
-    ],
+    unoptimized: true,
   },
 };
 
