@@ -3,6 +3,8 @@ import { ApiError } from '../../utils/ApiError';
 type NumericInput = number | string | { toString(): string };
 
 export interface ListingPricingInput {
+  primaryUnit?: 'HOURLY' | 'DAILY' | 'WEEKLY' | 'MONTHLY';
+  hourlyRate?: NumericInput | null;
   dailyRate: NumericInput;
   weeklyRate?: NumericInput | null;
   monthlyRate?: NumericInput | null;
@@ -23,10 +25,14 @@ export interface QuoteInput {
   endDate: Date;
   quantity: number;
   fulfillmentMethod: 'PICKUP' | 'DELIVERY';
+  listingType?: 'RENTAL' | 'APPOINTMENT';
+  appointmentDurationMinutes?: number | null;
 }
 
 export interface BookingQuote {
   durationDays: number;
+  durationCount: number;
+  pricingUnit: 'HOURLY' | 'DAILY';
   rentalSubtotal: number;
   discountAmount: number;
   deliveryCharge: number;
@@ -43,7 +49,14 @@ const roundCurrency = (value: number): number => Number(value.toFixed(2));
 
 export class PricingService {
   static quote(input: QuoteInput): BookingQuote {
-    const { pricing, startDate, endDate, quantity, fulfillmentMethod } = input;
+    const {
+      pricing,
+      startDate,
+      endDate,
+      quantity,
+      fulfillmentMethod,
+      listingType = 'RENTAL',
+    } = input;
     const durationMs = endDate.getTime() - startDate.getTime();
     if (!Number.isFinite(durationMs) || durationMs <= 0) {
       throw new ApiError(400, 'End date must be later than start date.');
@@ -53,21 +66,39 @@ export class PricingService {
     }
 
     const durationDays = Math.ceil(durationMs / (24 * 60 * 60 * 1000));
-    if (durationDays < pricing.minDuration || durationDays > pricing.maxDuration) {
+    const appointmentPricingUnit =
+      listingType === 'APPOINTMENT' && pricing.primaryUnit === 'HOURLY' ? 'HOURLY' : 'DAILY';
+    const durationCount =
+      listingType === 'APPOINTMENT'
+        ? appointmentPricingUnit === 'HOURLY'
+          ? durationMs / (60 * 60 * 1000)
+          : Math.ceil(durationMs / (24 * 60 * 60 * 1000))
+        : durationDays;
+    if (
+      !Number.isInteger(durationCount) ||
+      durationCount < pricing.minDuration ||
+      durationCount > pricing.maxDuration
+    ) {
       throw new ApiError(
         400,
-        `Rental duration must be between ${pricing.minDuration} and ${pricing.maxDuration} day(s).`
+        `Booking duration must be between ${pricing.minDuration} and ${pricing.maxDuration} ${appointmentPricingUnit === 'HOURLY' ? 'hour(s)' : 'day(s)'}.`
       );
     }
 
     const dailyRate = amount(pricing.dailyRate);
+    const hourlyRate = amount(pricing.hourlyRate);
     const weeklyRate = amount(pricing.weeklyRate);
     const monthlyRate = amount(pricing.monthlyRate);
     const weeks = Math.floor(durationDays / 7);
     const daysAfterWeeks = durationDays % 7;
     let rentalPerUnit = 0;
 
-    if (monthlyRate > 0 && durationDays >= 30) {
+    if (listingType === 'APPOINTMENT') {
+      rentalPerUnit =
+        appointmentPricingUnit === 'HOURLY'
+          ? durationCount * (hourlyRate || dailyRate)
+          : durationCount * dailyRate;
+    } else if (monthlyRate > 0 && durationDays >= 30) {
       const months = Math.floor(durationDays / 30);
       const remainingDays = durationDays % 30;
       rentalPerUnit = months * monthlyRate + remainingDays * dailyRate;
@@ -99,6 +130,8 @@ export class PricingService {
 
     return {
       durationDays,
+      durationCount,
+      pricingUnit: appointmentPricingUnit,
       rentalSubtotal,
       discountAmount,
       deliveryCharge,

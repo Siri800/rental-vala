@@ -2,14 +2,59 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import Script from 'next/script';
 import { Star, MapPin, ShieldCheck, CheckCircle2, AlertCircle } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
+
+interface RazorpayCheckoutResponse {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+}
+
+interface RazorpayCheckoutOptions {
+  key: string;
+  amount: number;
+  currency: string;
+  name: string;
+  description: string;
+  order_id: string;
+  method: { upi: boolean; card: boolean; netbanking: boolean; wallet: boolean };
+  upi: { flow: 'qrcode' };
+  config: {
+    display: {
+      blocks: {
+        upi_qr: {
+          name: string;
+          instruments: { method: 'upi'; flows: string[] }[];
+        };
+        other_methods: {
+          name: string;
+          instruments: { method: 'card' | 'netbanking' | 'wallet' }[];
+        };
+      };
+      sequence: string[];
+      preferences: { show_default_blocks: boolean };
+    };
+  };
+  handler: (response: RazorpayCheckoutResponse) => Promise<void>;
+  modal: { ondismiss: () => void };
+  theme: { color: string };
+}
+
+declare global {
+  interface Window {
+    Razorpay?: new (options: RazorpayCheckoutOptions) => { open: () => void };
+  }
+}
 
 interface ListingDetail {
   id: string;
   title: string;
   slug: string;
   description: string;
+  listingType: 'RENTAL' | 'APPOINTMENT';
+  appointmentDurationMinutes?: number | null;
   brand?: string;
   model?: string;
   condition: string;
@@ -39,6 +84,8 @@ interface ListingDetail {
     attribute: { label: string; unit?: string };
   }[];
   pricing: {
+    primaryUnit: 'HOURLY' | 'DAILY' | 'WEEKLY' | 'MONTHLY';
+    hourlyRate?: string | null;
     dailyRate: string;
     weeklyRate?: string;
     monthlyRate?: string;
@@ -62,6 +109,8 @@ interface QuoteData {
   availableQuantity: number;
   quote: {
     durationDays: number;
+    durationCount: number;
+    pricingUnit: 'HOURLY' | 'DAILY';
     rentalSubtotal: number;
     deliveryCharge: number;
     taxAmount: number;
@@ -81,11 +130,14 @@ export default function ListingDetailPage() {
 
   const [startDate, setStartDate] = useState(tomorrow);
   const [endDate, setEndDate] = useState(fourDaysLater);
+  const [appointmentTime, setAppointmentTime] = useState('10:00');
   const [quantity, setQuantity] = useState(1);
   const [fulfillmentMethod, setFulfillmentMethod] = useState<'PICKUP' | 'DELIVERY'>('PICKUP');
   const [quoteInfo, setQuoteInfo] = useState<QuoteData | null>(null);
   const [bookingBusy, setBookingBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [razorpayLoaded, setRazorpayLoaded] = useState(false);
+  const [razorpayLoadError, setRazorpayLoadError] = useState(false);
 
   useEffect(() => {
     apiFetch<{ data: ListingDetail }>(`/listings/${params.slug}`)
@@ -94,14 +146,30 @@ export default function ListingDetailPage() {
       .finally(() => setLoading(false));
   }, [params.slug]);
 
+  const getBookingDates = () => {
+    if (listing?.listingType === 'APPOINTMENT') {
+      const start = new Date(`${startDate}T${appointmentTime}:00`);
+      const durationMinutes = listing.appointmentDurationMinutes ?? 60;
+      return {
+        startDate: start.toISOString(),
+        endDate: new Date(start.getTime() + durationMinutes * 60 * 1000).toISOString(),
+      };
+    }
+
+    return {
+      startDate: new Date(`${startDate}T10:00:00Z`).toISOString(),
+      endDate: new Date(`${endDate}T10:00:00Z`).toISOString(),
+    };
+  };
+
   useEffect(() => {
     if (!listing) return;
+    const dates = getBookingDates();
     apiFetch<{ data: QuoteData }>('/bookings/quote', {
       method: 'POST',
       body: JSON.stringify({
         listingId: listing.id,
-        startDate: new Date(`${startDate}T10:00:00Z`).toISOString(),
-        endDate: new Date(`${endDate}T10:00:00Z`).toISOString(),
+        ...dates,
         quantity,
         fulfillmentMethod,
       }),
@@ -111,65 +179,150 @@ export default function ListingDetailPage() {
         setErrorMsg('');
       })
       .catch((err) => setErrorMsg(err.message));
-  }, [listing, startDate, endDate, quantity, fulfillmentMethod]);
+  }, [listing, startDate, endDate, appointmentTime, quantity, fulfillmentMethod]);
 
   const handleBookAndPay = async () => {
     const token = localStorage.getItem('rv_access_token');
     if (!token) {
-      router.push('/login');
+      const intendedPath = window.location.pathname;
+      sessionStorage.setItem('rv_intended_redirect', intendedPath);
+      router.push(`/login?redirect=${encodeURIComponent(intendedPath)}`);
       return;
     }
     if (!listing) return;
 
+    let checkoutOpened = false;
     try {
       setBookingBusy(true);
       setErrorMsg('');
 
-      const bookingRes = await apiFetch<{ data: { id: string; status: string } }>('/bookings', {
+      const bookingRes = await apiFetch<{
+        data: {
+          id: string;
+          status: string;
+          bookingNumber: string;
+          checkout?: {
+            orderId: string;
+            amount: number;
+            currency: string;
+            keyId?: string;
+            sandboxMode: boolean;
+          };
+        };
+      }>('/bookings', {
         method: 'POST',
         body: JSON.stringify({
           listingId: listing.id,
-          startDate: new Date(`${startDate}T10:00:00Z`).toISOString(),
-          endDate: new Date(`${endDate}T10:00:00Z`).toISOString(),
+          ...getBookingDates(),
           quantity,
           fulfillmentMethod,
         }),
       });
 
       if (bookingRes.data.status === 'PAYMENT_PENDING') {
-        const orderRes = await apiFetch<{ data: { orderId: string; sandboxMode: boolean } }>(
-          '/payments/create-order',
-          {
-            method: 'POST',
-            body: JSON.stringify({ bookingId: bookingRes.data.id }),
-          }
-        );
+        const checkout = bookingRes.data.checkout;
+        if (!checkout) throw new Error('Checkout order was not returned for this booking.');
 
-        if (orderRes.data.sandboxMode) {
+        if (checkout.sandboxMode) {
           await apiFetch('/payments/verify', {
             method: 'POST',
             body: JSON.stringify({
-              orderId: orderRes.data.orderId,
-              paymentId: `pay_demo_${Date.now()}`,
-              signature: 'sandbox_verified',
+              razorpay_order_id: checkout.orderId,
+              razorpay_payment_id: `pay_demo_${Date.now()}`,
+              razorpay_signature: 'sandbox_verified',
             }),
           });
+          router.push('/dashboard/customer');
+          return;
         }
+
+        if (!checkout.keyId || !window.Razorpay) {
+          throw new Error('Razorpay Checkout is not ready. Please reload and try again.');
+        }
+
+        const razorpay = new window.Razorpay({
+          key: checkout.keyId,
+          amount: Math.round(checkout.amount * 100),
+          currency: checkout.currency,
+          name: 'Rental Vala',
+          description: `Booking ${bookingRes.data.bookingNumber}`,
+          order_id: checkout.orderId,
+          method: { upi: true, card: true, netbanking: true, wallet: true },
+          upi: { flow: 'qrcode' },
+          config: {
+            display: {
+              blocks: {
+                upi_qr: {
+                  name: 'Pay by UPI QR',
+                  instruments: [{ method: 'upi', flows: ['qr'] }],
+                },
+                other_methods: {
+                  name: 'Other payment methods',
+                  instruments: [
+                    { method: 'card' },
+                    { method: 'netbanking' },
+                    { method: 'wallet' },
+                  ],
+                },
+              },
+              sequence: ['block.upi_qr', 'block.other_methods'],
+              preferences: { show_default_blocks: false },
+            },
+          },
+          handler: async (response) => {
+            try {
+              await apiFetch('/payments/verify', {
+                method: 'POST',
+                body: JSON.stringify(response),
+              });
+              router.push('/dashboard/customer');
+            } catch (err: unknown) {
+              setErrorMsg(err instanceof Error ? err.message : 'Payment verification failed.');
+              setBookingBusy(false);
+            }
+          },
+          modal: {
+            ondismiss: () => {
+              setErrorMsg('Checkout was closed. Your booking is still awaiting payment.');
+              setBookingBusy(false);
+            },
+          },
+          theme: { color: '#2563eb' },
+        });
+        razorpay.open();
+        checkoutOpened = true;
+        return;
       }
 
       router.push('/dashboard/customer');
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : 'Booking failed');
     } finally {
-      setBookingBusy(false);
+      if (!checkoutOpened) setBookingBusy(false);
     }
   };
 
   if (loading) return <div className="max-w-7xl mx-auto p-12 text-center">Loading listing details...</div>;
   if (!listing) return <div className="max-w-7xl mx-auto p-12 text-center text-red-600">{errorMsg || 'Listing not found'}</div>;
+  const listedRate =
+    listing.listingType === 'APPOINTMENT' && listing.pricing.primaryUnit === 'HOURLY'
+      ? listing.pricing.hourlyRate ?? listing.pricing.dailyRate
+      : listing.pricing.dailyRate;
+  const rateUnit =
+    listing.listingType === 'APPOINTMENT' && listing.pricing.primaryUnit === 'HOURLY'
+      ? ' / hour'
+      : listing.listingType === 'APPOINTMENT'
+        ? ' / day'
+        : ' / day';
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+      <Script
+        src="https://checkout.razorpay.com/v1/checkout.js"
+        strategy="afterInteractive"
+        onReady={() => setRazorpayLoaded(true)}
+        onError={() => setRazorpayLoadError(true)}
+      />
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
         {/* Left Column: Gallery, Specs, Policies */}
         <div className="lg:col-span-7 space-y-8">
@@ -238,7 +391,7 @@ export default function ListingDetailPage() {
                 <ShieldCheck className="w-5 h-5 text-emerald-600" />
               </h3>
               <p className="text-xs text-slate-500 mt-1">
-                Pickup Location: {listing.pickupAddress}
+                {listing.listingType === 'APPOINTMENT' ? 'Venue' : 'Pickup Location'}: {listing.pickupAddress}
               </p>
             </div>
             <div className="text-right">
@@ -256,39 +409,76 @@ export default function ListingDetailPage() {
             <div className="flex items-baseline justify-between border-b border-slate-100 pb-4">
               <div>
                 <span className="text-3xl font-extrabold text-slate-900">
-                  ₹{Number(listing.pricing.dailyRate).toLocaleString('en-IN')}
+                  ₹{Number(listedRate).toLocaleString('en-IN')}
                 </span>
-                <span className="text-sm text-slate-500"> / day</span>
+                <span className="text-sm text-slate-500">{rateUnit}</span>
               </div>
-              {listing.pricing.weeklyRate && (
+              {listing.listingType !== 'APPOINTMENT' &&
+                listing.pricing.weeklyRate &&
+                Number(listing.pricing.weeklyRate) > 0 && (
                 <span className="text-xs font-semibold bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-full">
                   Weekly: ₹{Number(listing.pricing.weeklyRate).toLocaleString('en-IN')}
                 </span>
               )}
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Start Date</label>
-                <input
-                  type="date"
-                  value={startDate}
-                  min={tomorrow}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
-                />
+            {listing.listingType === 'APPOINTMENT' ? (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Appointment Date</label>
+                  <input
+                    type="date"
+                    value={startDate}
+                    min={tomorrow}
+                    onChange={(event) => setStartDate(event.target.value)}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Available Time</label>
+                  <select
+                    value={appointmentTime}
+                    onChange={(event) => setAppointmentTime(event.target.value)}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                  >
+                    {['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00'].map(
+                      (time) => (
+                        <option key={time} value={time}>
+                          {time}
+                        </option>
+                      )
+                    )}
+                  </select>
+                </div>
+                <p className="col-span-2 text-xs text-slate-500">
+                  Slot length: {listing.appointmentDurationMinutes ?? 60} minutes. Availability is checked
+                  for the selected date and time.
+                </p>
               </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">End Date</label>
-                <input
-                  type="date"
-                  value={endDate}
-                  min={startDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
-                />
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Start Date</label>
+                  <input
+                    type="date"
+                    value={startDate}
+                    min={tomorrow}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">End Date</label>
+                  <input
+                    type="date"
+                    value={endDate}
+                    min={startDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
               </div>
-            </div>
+            )}
 
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -304,6 +494,11 @@ export default function ListingDetailPage() {
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Fulfillment</label>
+                {listing.listingType === 'APPOINTMENT' ? (
+                  <div className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                    Visit the venue
+                  </div>
+                ) : (
                 <select
                   value={fulfillmentMethod}
                   onChange={(e) => setFulfillmentMethod(e.target.value as 'PICKUP' | 'DELIVERY')}
@@ -316,6 +511,7 @@ export default function ListingDetailPage() {
                     </option>
                   )}
                 </select>
+                )}
               </div>
             </div>
 
@@ -324,14 +520,20 @@ export default function ListingDetailPage() {
                 <div className="flex items-center justify-between text-xs font-semibold">
                   <span className={quoteInfo.isAvailable ? 'text-emerald-600' : 'text-red-600'}>
                     {quoteInfo.isAvailable
-                      ? `✓ ${quoteInfo.availableQuantity} unit(s) available for selected dates`
-                      : '✗ Insufficient stock for these dates'}
+                      ? listing.listingType === 'APPOINTMENT'
+                        ? `✓ ${quoteInfo.availableQuantity} slot(s) available for this time`
+                        : `✓ ${quoteInfo.availableQuantity} unit(s) available for selected dates`
+                      : listing.listingType === 'APPOINTMENT'
+                        ? '✗ No slots available for this time'
+                        : '✗ Insufficient stock for these dates'}
                   </span>
                 </div>
 
                 <div className="flex justify-between text-slate-600 pt-2">
                   <span>
-                    Rental ({quoteInfo.quote.durationDays} days × {quantity} qty)
+                    {listing.listingType === 'APPOINTMENT'
+                      ? `Appointment (${quoteInfo.quote.durationCount} ${quoteInfo.quote.pricingUnit === 'HOURLY' ? 'hour(s)' : 'day(s)'} × ${quantity} qty)`
+                      : `Rental (${quoteInfo.quote.durationDays} days × ${quantity} qty)`}
                   </span>
                   <span>₹{quoteInfo.quote.rentalSubtotal.toLocaleString('en-IN')}</span>
                 </div>
@@ -369,15 +571,30 @@ export default function ListingDetailPage() {
 
             <button
               onClick={handleBookAndPay}
-              disabled={bookingBusy || !quoteInfo?.isAvailable}
+              disabled={
+                bookingBusy ||
+                !quoteInfo?.isAvailable ||
+                (listing.instantBooking && !razorpayLoaded)
+              }
               className="w-full bg-brand-600 hover:bg-brand-700 disabled:bg-slate-300 text-white font-bold py-3.5 rounded-xl shadow-md transition"
             >
               {bookingBusy
                 ? 'Processing Reservation...'
+                : listing.instantBooking && !razorpayLoaded
+                  ? 'Loading Secure Checkout...'
                 : listing.instantBooking
-                  ? 'Reserve & Pay Now'
-                  : 'Request Booking Approval'}
+                  ? listing.listingType === 'APPOINTMENT'
+                    ? 'Book Appointment & Pay'
+                    : 'Reserve & Pay Now'
+                  : listing.listingType === 'APPOINTMENT'
+                    ? 'Request Appointment'
+                    : 'Request Booking Approval'}
             </button>
+            {razorpayLoadError && listing.instantBooking && (
+              <p className="text-xs text-red-600 text-center">
+                Secure checkout could not load. Please disable content blockers and reload.
+              </p>
+            )}
 
             <p className="text-[11px] text-center text-slate-400 flex items-center justify-center gap-1">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />

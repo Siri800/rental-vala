@@ -1,4 +1,11 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8085/api/v1';
+const configuredApiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8085';
+const apiUrl = /^https?:\/\//i.test(configuredApiUrl)
+  ? configuredApiUrl
+  : `https://${configuredApiUrl}`;
+const normalizedApiUrl = apiUrl.replace(/\/+$/, '');
+export const API_BASE = normalizedApiUrl.endsWith('/api/v1')
+  ? normalizedApiUrl
+  : `${normalizedApiUrl}/api/v1`;
 
 function requestHeaders(headers: HeadersInit | undefined, authToken: string | null): Headers {
   const result = new Headers(headers);

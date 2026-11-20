@@ -1,0 +1,41 @@
+databases:
+  - name: rentalvala-db
+    plan: free
+    databaseName: rentalvala
+    user: rentalvala
+
+services:
+  - type: web
+    name: rental-vala-api
+    runtime: node
+    plan: starter
+    buildCommand: pnpm install && pnpm --filter @rental-vala/database generate && pnpm --filter @rental-vala/api build
+    startCommand: pnpm --filter @rental-vala/database migrate && pnpm --filter @rental-vala/database seed && pnpm --filter @rental-vala/api start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: rentalvala-db
+          property: connectionString
+      - key: FRONTEND_URL
+        value: https://rental-vala-web.onrender.com
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: OTP_SECRET_SALT
+        generateValue: true
+
+  - type: web
+    name: rental-vala-web
+    runtime: node
+    plan: starter
+    buildCommand: pnpm install && pnpm --filter @rental-vala/web build
+    startCommand: pnpm --filter @rental-vala/web start
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        fromService:
+          type: web
+          name: rental-vala-api
+          property: host

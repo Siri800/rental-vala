@@ -26,10 +26,17 @@ JSON containing `fileName`, `contentType` (`image/jpeg`, `image/png`, or
 to `uploadUrl` with an HTTP `PUT` and the same `Content-Type`. Listing images are
 publicly readable; KYC objects remain private.
 
-Configure MinIO/S3 with `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY_ID`,
+Configure MinIO/S3 with `MINIO_ENDPOINT` (or `S3_ENDPOINT`), `S3_REGION`, `S3_ACCESS_KEY_ID`,
 `S3_SECRET_ACCESS_KEY`, `S3_BUCKET_MEDIA`, and `S3_MEDIA_PUBLIC_URL`. The API
 creates the media bucket and applies its listing-read policy and browser CORS
 configuration on the first upload when needed.
+
+## Render Deployment
+
+Deploy the root `render.yaml` Blueprint to create the PostgreSQL database, API,
+and web services. Set `FRONTEND_URL` to the deployed web service URL if its
+generated hostname differs, and configure MinIO/S3 credentials to enable image
+uploads. Without `REDIS_URL`, OTP rate-limit state uses process-local memory.
 
 ## GST Tax Invoices
 

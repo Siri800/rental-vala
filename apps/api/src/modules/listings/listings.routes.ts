@@ -93,12 +93,25 @@ listingsRouter.get('/', async (req, res, next) => {
         orderBy,
         include: {
           category: { select: { name: true, slug: true } },
+          subcategory: { select: { name: true, slug: true } },
           provider: { select: { businessName: true, city: true, averageRating: true } },
           images: { orderBy: { displayOrder: 'asc' }, take: 1 },
           pricing: {
-            select: { dailyRate: true, weeklyRate: true, monthlyRate: true, securityDeposit: true },
+            select: {
+              primaryUnit: true,
+              hourlyRate: true,
+              dailyRate: true,
+              weeklyRate: true,
+              monthlyRate: true,
+              securityDeposit: true,
+            },
           },
-          inventoryItem: { select: { totalQuantity: true } },
+          inventoryItem: {
+            select: {
+              totalQuantity: true,
+              _count: { select: { units: { where: { status: 'AVAILABLE' } } } },
+            },
+          },
         },
       }),
       prisma.listing.count({ where }),
@@ -154,6 +167,20 @@ listingsRouter.get('/:slug', async (req, res, next) => {
 listingsRouter.post('/', authenticate, authorize('PROVIDER'), async (req, res, next) => {
   try {
     const data = listingCreateSchema.parse(req.body);
+    if (data.listingType === 'APPOINTMENT') {
+      if (!data.appointmentDurationMinutes) {
+        throw new ApiError(400, 'Appointment listings must specify a slot duration in minutes.');
+      }
+      if (!['HOURLY', 'DAILY'].includes(data.pricing.primaryUnit)) {
+        throw new ApiError(400, 'Appointment pricing must use an hourly or daily rate.');
+      }
+      if (
+        data.pricing.primaryUnit === 'HOURLY' &&
+        data.appointmentDurationMinutes % 60 !== 0
+      ) {
+        throw new ApiError(400, 'Hourly appointment slots must use a whole-hour duration.');
+      }
+    }
     const provider = await prisma.providerProfile.findUnique({
       where: { userId: req.user!.userId },
       select: { id: true },
@@ -218,6 +245,9 @@ listingsRouter.post('/', authenticate, authorize('PROVIDER'), async (req, res, n
         title: data.title,
         slug: `${slugBase}-${randomUUID().slice(0, 8)}`,
         description: data.description,
+        listingType: data.listingType,
+        appointmentDurationMinutes:
+          data.listingType === 'APPOINTMENT' ? data.appointmentDurationMinutes : null,
         brand: data.brand,
         model: data.model,
         condition: data.condition,

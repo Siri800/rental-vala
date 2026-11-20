@@ -25,10 +25,11 @@ export const app = express();
 app.use(helmet());
 app.use(
   cors({
-    origin: [env.APP_URL, 'http://localhost:3000'],
+    origin: [...new Set([env.FRONTEND_URL, 'http://localhost:3000'])],
     credentials: true,
   })
 );
+app.use('/api/v1/payments/webhook', express.raw({ type: 'application/json', limit: '5mb' }));
 app.use(express.json({ limit: '5mb' }));
 app.use(cookieParser());
 app.use(morgan('dev'));
@@ -51,7 +52,7 @@ app.get('/', (_req, res) => {
   res.json({
     service: 'Rental Vala API',
     status: 'running',
-    frontend: env.APP_URL,
+    frontend: env.FRONTEND_URL,
     docs: '/api/v1/docs',
   });
 });
@@ -74,6 +75,7 @@ app.use('/api/v1/admin', adminRouter);
 app.use('/api/v1/uploads', uploadsRouter);
 
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  console.error('[API Error]', err instanceof Error ? err.stack : err);
   if (err instanceof ZodError) {
     return res.status(400).json({
       success: false,
@@ -88,7 +90,6 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
       details: err.details,
     });
   }
-  console.error('[Unhandled API Error]', err);
   return res.status(500).json({
     success: false,
     message: 'Internal server error',

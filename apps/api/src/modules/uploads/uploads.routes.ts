@@ -30,14 +30,14 @@ const extensionByContentType = {
   'image/webp': 'webp',
 } as const;
 
-const isLocalS3Endpoint = ['localhost', '127.0.0.1'].includes(
-  new URL(env.S3_ENDPOINT).hostname
-);
+const isLocalS3Endpoint = env.S3_ENDPOINT
+  ? ['localhost', '127.0.0.1'].includes(new URL(env.S3_ENDPOINT).hostname)
+  : false;
 const regionLocationConstraint = Object.values(BucketLocationConstraint).find(
   (region) => region === env.S3_REGION
 );
 const s3Client =
-  env.S3_ACCESS_KEY_ID && env.S3_SECRET_ACCESS_KEY
+  env.S3_ENDPOINT && env.S3_ACCESS_KEY_ID && env.S3_SECRET_ACCESS_KEY
     ? new S3Client({
         endpoint: env.S3_ENDPOINT,
         region: isLocalS3Endpoint ? 'us-east-1' : env.S3_REGION,
@@ -53,7 +53,10 @@ let bucketSetup: Promise<void> | undefined;
 
 async function ensureMediaBucket(): Promise<S3Client> {
   if (!s3Client) {
-    throw new ApiError(503, 'Image storage is not configured. Set S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY.');
+    throw new ApiError(
+      503,
+      'Image storage is not configured. Set MINIO_ENDPOINT (or S3_ENDPOINT), S3_ACCESS_KEY_ID, and S3_SECRET_ACCESS_KEY.'
+    );
   }
 
   if (!bucketSetup) {

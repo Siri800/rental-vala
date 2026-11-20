@@ -28,6 +28,12 @@ function SearchContent() {
   const [sort, setSort] = useState('recommended');
 
   useEffect(() => {
+    setQ(searchParams.get('q') || '');
+    setCategory(searchParams.get('category') || '');
+    setCity(searchParams.get('city') || '');
+  }, [searchParams]);
+
+  useEffect(() => {
     apiFetch<{ data: CategoryOption[] }>('/categories')
       .then((res) => setCategories(res.data))
       .catch(() => {});
@@ -84,7 +90,7 @@ function SearchContent() {
               onChange={(e) => setCategory(e.target.value)}
               className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white"
             >
-              <option value="">All 12 Categories</option>
+              <option value="">All Categories</option>
               {categories.map((c) => (
                 <option key={c.id} value={c.slug}>
                   {c.name}

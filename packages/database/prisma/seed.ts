@@ -6,6 +6,7 @@ import {
   ProviderVerificationStatus,
   BusinessType,
   ListingStatus,
+  ListingType,
   ProductCondition,
   PricingUnit,
   InventoryUnitStatus,
@@ -179,7 +180,58 @@ const CATEGORIES_DATA = [
       { key: 'amc_support', label: '24/7 Replacement & Maintenance Support', dataType: AttributeDataType.BOOLEAN, isRequired: true, isFilterable: true },
     ],
   },
+  {
+    name: 'Appointments',
+    slug: 'appointments',
+    iconName: 'CalendarCheck',
+    commission: 10.0,
+    description: 'Book gym sessions, salon services, and hourly or daily hotel stays.',
+    subcategories: ['Gym', 'Salon', 'Hotel'],
+    attributes: [],
+  },
 ];
+
+const CATEGORY_IMAGE_URLS: Record<string, string> = {
+  vehicles: 'https://images.unsplash.com/photo-1492144534655-ae79c964c9d7?auto=format&fit=crop&w=1200&q=85',
+  electronics: 'https://images.unsplash.com/photo-1516035069371-29a1b244cc32?auto=format&fit=crop&w=1200&q=85',
+  furniture: 'https://images.unsplash.com/photo-1555041469-a586c61ea9bc?auto=format&fit=crop&w=1200&q=85',
+  'home-appliances': 'https://images.unsplash.com/photo-1584622650111-993a426fbf0a?auto=format&fit=crop&w=1200&q=85',
+  'tools-equipment': 'https://images.unsplash.com/photo-1504148455328-c376907d081c?auto=format&fit=crop&w=1200&q=85',
+  'event-party': 'https://images.unsplash.com/photo-1506157786151-b8491531f063?auto=format&fit=crop&w=1200&q=85',
+  fashion: 'https://images.unsplash.com/photo-1595777457583-95e059d581b8?auto=format&fit=crop&w=1200&q=85',
+  'sports-outdoor': 'https://images.unsplash.com/photo-1534438327276-14e5300c3a48?auto=format&fit=crop&w=1200&q=85',
+  'baby-kids': 'https://images.unsplash.com/photo-1591348278863-a8fb3887e2aa?auto=format&fit=crop&w=1200&q=85',
+  travel: 'https://images.unsplash.com/photo-1553062407-98eeb64c6a62?auto=format&fit=crop&w=1200&q=85',
+  'property-spaces': 'https://images.unsplash.com/photo-1497366754035-f200968a6e72?auto=format&fit=crop&w=1200&q=85',
+  'business-professional-equipment': 'https://images.unsplash.com/photo-1584982751601-97dcc096659c?auto=format&fit=crop&w=1200&q=85',
+  appointments: 'https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?auto=format&fit=crop&w=1200&q=85',
+};
+
+type SampleListing = {
+  slug: string;
+  title: string;
+  description: string;
+  categorySlug: string;
+  subcategorySlug: string;
+  city: string;
+  brand?: string;
+  model?: string;
+  condition: ProductCondition;
+  dailyRate: number;
+  hourlyRate?: number;
+  primaryUnit?: PricingUnit;
+  weeklyRate: number;
+  monthlyRate: number;
+  securityDeposit: number;
+  deliveryFee: number;
+  imageUrl: string;
+  imageAlt: string;
+  unitCount: number;
+  unitSerials?: string[];
+  attributes: Record<string, string | number | boolean | string[]>;
+  listingType?: ListingType;
+  appointmentDurationMinutes?: number;
+};
 
 async function main() {
   console.log('Starting Rental Vala database seed...');
@@ -347,7 +399,7 @@ async function main() {
     };
   }
 
-  // 3. Seed All 12 Categories, Subcategories & Dynamic Attributes
+  // 3. Seed rental and appointment categories, subcategories, and attributes
   for (let i = 0; i < CATEGORIES_DATA.length; i++) {
     const cat = CATEGORIES_DATA[i];
     const createdCat = await prisma.category.upsert({
@@ -356,6 +408,7 @@ async function main() {
         name: cat.name,
         description: cat.description,
         iconName: cat.iconName,
+        bannerUrl: CATEGORY_IMAGE_URLS[cat.slug],
         defaultCommissionPct: cat.commission,
         displayOrder: i + 1,
       },
@@ -364,6 +417,7 @@ async function main() {
         slug: cat.slug,
         description: cat.description,
         iconName: cat.iconName,
+        bannerUrl: CATEGORY_IMAGE_URLS[cat.slug],
         defaultCommissionPct: cat.commission,
         displayOrder: i + 1,
       },
@@ -414,7 +468,7 @@ async function main() {
 
   // Policies do not carry rental-duration columns in this schema; duration limits
   // belong to ListingPricing.minDuration and ListingPricing.maxDuration.
-  const sampleListings = [
+  const sampleListings: SampleListing[] = [
     {
       slug: 'sony-fx3-full-frame-cinema-camera-kit',
       title: 'Sony FX3 Full-Frame Cinema Line Camera Kit',
@@ -559,6 +613,71 @@ async function main() {
       imageAlt: 'Medical equipment for home care', unitCount: 2,
       attributes: { certification: 'Medical-grade device; serviced and safety checked.', amc_support: true },
     },
+    {
+      slug: 'hyderabad-gym-personal-training',
+      title: 'Personal Training Session',
+      description: 'Reserve a one-hour coached training slot at a fully equipped Hyderabad fitness studio.',
+      categorySlug: 'appointments', subcategorySlug: 'gym', city: 'Hyderabad',
+      condition: ProductCondition.GOOD, listingType: ListingType.APPOINTMENT,
+      appointmentDurationMinutes: 60, primaryUnit: PricingUnit.HOURLY,
+      hourlyRate: 500, dailyRate: 500, weeklyRate: 0, monthlyRate: 0,
+      securityDeposit: 0, deliveryFee: 0, unitCount: 12,
+      imageUrl: 'https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?auto=format&fit=crop&w=1600&q=85',
+      imageAlt: 'Gym equipment and personal training session',
+      attributes: {},
+    },
+    {
+      slug: 'hyderabad-gym-day-pass',
+      title: 'Gym Day Pass',
+      description: 'Book a day pass with access to cardio, strength, and functional training areas.',
+      categorySlug: 'appointments', subcategorySlug: 'gym', city: 'Hyderabad',
+      condition: ProductCondition.GOOD, listingType: ListingType.APPOINTMENT,
+      appointmentDurationMinutes: 480, primaryUnit: PricingUnit.DAILY,
+      hourlyRate: 0, dailyRate: 350, weeklyRate: 0, monthlyRate: 0,
+      securityDeposit: 0, deliveryFee: 0, unitCount: 12,
+      imageUrl: 'https://images.unsplash.com/photo-1534438327276-14e5300c3a48?auto=format&fit=crop&w=1600&q=85',
+      imageAlt: 'Gym floor with cardio and strength equipment',
+      attributes: {},
+    },
+    {
+      slug: 'hyderabad-salon-hair-spa-appointment',
+      title: 'Salon Hair, Spa & Grooming Appointment',
+      description: 'Book a one-hour salon service with experienced stylists, spa treatments, and grooming options.',
+      categorySlug: 'appointments', subcategorySlug: 'salon', city: 'Hyderabad',
+      condition: ProductCondition.GOOD, listingType: ListingType.APPOINTMENT,
+      appointmentDurationMinutes: 60, primaryUnit: PricingUnit.HOURLY,
+      hourlyRate: 1200, dailyRate: 1200, weeklyRate: 0, monthlyRate: 0,
+      securityDeposit: 0, deliveryFee: 0, unitCount: 4,
+      imageUrl: 'https://images.unsplash.com/photo-1560066984-138dadb4c035?auto=format&fit=crop&w=1600&q=85',
+      imageAlt: 'Modern salon styling chairs',
+      attributes: {},
+    },
+    {
+      slug: 'hyderabad-hotel-hourly-room-stay',
+      title: 'Hotel Room — Hourly Stay',
+      description: 'Reserve a private, serviced hotel room for a one-hour daytime stay in central Hyderabad.',
+      categorySlug: 'appointments', subcategorySlug: 'hotel', city: 'Hyderabad',
+      condition: ProductCondition.GOOD, listingType: ListingType.APPOINTMENT,
+      appointmentDurationMinutes: 60, primaryUnit: PricingUnit.HOURLY,
+      hourlyRate: 900, dailyRate: 900, weeklyRate: 0, monthlyRate: 0,
+      securityDeposit: 0, deliveryFee: 0, unitCount: 3,
+      imageUrl: 'https://images.unsplash.com/photo-1611892440504-42a792e24d32?auto=format&fit=crop&w=1600&q=85',
+      imageAlt: 'Comfortable hotel room for an hourly stay',
+      attributes: {},
+    },
+    {
+      slug: 'hyderabad-hotel-daily-room-stay',
+      title: 'Hotel Room — Daily Stay',
+      description: 'Book a clean, furnished hotel room for a full-day stay with front-desk support.',
+      categorySlug: 'appointments', subcategorySlug: 'hotel', city: 'Hyderabad',
+      condition: ProductCondition.GOOD, listingType: ListingType.APPOINTMENT,
+      appointmentDurationMinutes: 1440, primaryUnit: PricingUnit.DAILY,
+      hourlyRate: 0, dailyRate: 4200, weeklyRate: 0, monthlyRate: 0,
+      securityDeposit: 0, deliveryFee: 0, unitCount: 5,
+      imageUrl: 'https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=1600&q=85',
+      imageAlt: 'Hotel room with a large bed and natural light',
+      attributes: {},
+    },
   ];
 
   for (const sample of sampleListings) {
@@ -583,6 +702,8 @@ async function main() {
         subcategoryId: subcategory.id,
         title: sample.title,
         description: sample.description,
+        listingType: sample.listingType ?? ListingType.RENTAL,
+        appointmentDurationMinutes: sample.appointmentDurationMinutes ?? null,
         brand: sample.brand,
         model: sample.model,
         condition: sample.condition,
@@ -591,7 +712,7 @@ async function main() {
         pinCode: city.pinCode,
         pickupAddress: `Central ${sample.city}, India`,
         pickupAvailable: true,
-        deliveryAvailable: true,
+        deliveryAvailable: sample.listingType !== ListingType.APPOINTMENT,
         deliveryRadiusKm: 25,
         instantBooking: true,
         status: ListingStatus.PUBLISHED,
@@ -604,6 +725,8 @@ async function main() {
         title: sample.title,
         slug: sample.slug,
         description: sample.description,
+        listingType: sample.listingType ?? ListingType.RENTAL,
+        appointmentDurationMinutes: sample.appointmentDurationMinutes ?? null,
         brand: sample.brand,
         model: sample.model,
         condition: sample.condition,
@@ -612,7 +735,7 @@ async function main() {
         pinCode: city.pinCode,
         pickupAddress: `Central ${sample.city}, India`,
         pickupAvailable: true,
-        deliveryAvailable: true,
+        deliveryAvailable: sample.listingType !== ListingType.APPOINTMENT,
         deliveryRadiusKm: 25,
         instantBooking: true,
         status: ListingStatus.PUBLISHED,
@@ -620,7 +743,8 @@ async function main() {
     });
 
     const pricingData = {
-      primaryUnit: PricingUnit.DAILY,
+      primaryUnit: sample.primaryUnit ?? PricingUnit.DAILY,
+      hourlyRate: sample.hourlyRate,
       dailyRate: sample.dailyRate,
       weeklyRate: sample.weeklyRate,
       monthlyRate: sample.monthlyRate,
@@ -653,7 +777,7 @@ async function main() {
     });
 
     const inventoryData = {
-      sku: `RV-${sample.city.slice(0, 3).toUpperCase()}-${sample.slug.slice(-12).toUpperCase()}`,
+      sku: `RV-${sample.city.slice(0, 3).toUpperCase()}-${sample.slug.toUpperCase().replace(/[^A-Z0-9]/g, '-')}`,
       totalQuantity: sample.unitCount,
       trackIndividualUnits: true,
       bufferHours: 2,
@@ -676,7 +800,6 @@ async function main() {
           },
         },
         update: {
-          status: InventoryUnitStatus.AVAILABLE,
           assetTag: `${inventory.sku}-${String(unitNumber).padStart(2, '0')}`,
         },
         create: {

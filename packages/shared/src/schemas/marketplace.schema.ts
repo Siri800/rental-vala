@@ -17,6 +17,8 @@ export const providerProfileSchema = z.object({
 export const listingCreateSchema = z.object({
   categoryId: nonEmptyString,
   subcategoryId: nonEmptyString,
+  listingType: z.enum(['RENTAL', 'APPOINTMENT']).default('RENTAL'),
+  appointmentDurationMinutes: z.number().int().positive().max(1440).optional(),
   title: nonEmptyString.max(180),
   description: nonEmptyString.max(10000),
   brand: z.string().trim().max(100).optional(),
@@ -31,6 +33,7 @@ export const listingCreateSchema = z.object({
   deliveryRadiusKm: z.number().int().positive().optional(),
   instantBooking: z.boolean().default(false),
   pricing: z.object({
+    primaryUnit: z.enum(['HOURLY', 'DAILY', 'WEEKLY', 'MONTHLY']).default('DAILY'),
     dailyRate: nonNegativeAmount,
     hourlyRate: nonNegativeAmount.optional(),
     weeklyRate: nonNegativeAmount.optional(),

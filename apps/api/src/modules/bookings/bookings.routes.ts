@@ -13,6 +13,7 @@ import { PricingService } from '../pricing/pricing.service';
 import { ApiError } from '../../utils/ApiError';
 import { getRouteParam } from '../../utils/routeParam';
 import { generateInvoicePdf } from './invoice.service';
+import { createPaymentOrder } from '../payments/payment-order.service';
 
 export const bookingsRouter = Router();
 
@@ -36,6 +37,15 @@ async function getQuote(input: {
   ) {
     throw new ApiError(400, 'The selected fulfillment method is not available for this listing.');
   }
+  if (listing.listingType === 'APPOINTMENT') {
+    const expectedDurationMs = (listing.appointmentDurationMinutes ?? 0) * 60 * 1000;
+    if (
+      expectedDurationMs <= 0 ||
+      input.endDate.getTime() - input.startDate.getTime() !== expectedDurationMs
+    ) {
+      throw new ApiError(400, 'Select an appointment time slot with the listed duration.');
+    }
+  }
 
   const availability = await InventoryService.getAvailableQuantity(
     listing.id,
@@ -48,6 +58,8 @@ async function getQuote(input: {
     endDate: input.endDate,
     quantity: input.quantity,
     fulfillmentMethod: input.fulfillmentMethod,
+    listingType: listing.listingType,
+    appointmentDurationMinutes: listing.appointmentDurationMinutes,
   });
   return {
     listing,
@@ -96,7 +108,7 @@ bookingsRouter.post('/', authenticate, authorize('CUSTOMER'), async (req, res, n
     const status = result.listing.instantBooking
       ? BookingStatus.PAYMENT_PENDING
       : BookingStatus.PENDING_PROVIDER_APPROVAL;
-    const booking = await prisma.$transaction(async (tx) => {
+    const bookingResult = await prisma.$transaction(async (tx) => {
       await InventoryService.lockAndVerifyAvailability(
         tx,
         result.listing.id,
@@ -120,9 +132,19 @@ bookingsRouter.post('/', authenticate, authorize('CUSTOMER'), async (req, res, n
             create: {
               listingId: result.listing.id,
               quantity: input.quantity,
-              pricingUnit: 'DAILY',
-              durationCount: result.quote.durationDays,
-              unitRate: result.listing.pricing!.dailyRate,
+              pricingUnit:
+                result.listing.listingType === 'APPOINTMENT'
+                  ? result.listing.pricing!.primaryUnit
+                  : 'DAILY',
+              durationCount:
+                result.listing.listingType === 'APPOINTMENT'
+                  ? result.quote.durationCount
+                  : result.quote.durationDays,
+              unitRate:
+                result.listing.listingType === 'APPOINTMENT' &&
+                result.listing.pricing!.primaryUnit === 'HOURLY'
+                  ? result.listing.pricing!.hourlyRate ?? result.listing.pricing!.dailyRate
+                  : result.listing.pricing!.dailyRate,
               subtotal: result.quote.rentalSubtotal,
               depositPerUnit: result.listing.pricing!.securityDeposit,
             },
@@ -151,10 +173,25 @@ bookingsRouter.post('/', authenticate, authorize('CUSTOMER'), async (req, res, n
         },
         include: { priceBreakdown: true, items: { include: { listing: true } } },
       });
-      return created;
+      const checkout =
+        status === BookingStatus.PAYMENT_PENDING
+          ? await createPaymentOrder(tx, {
+              bookingId: created.id,
+              bookingNumber: created.bookingNumber,
+              amount: Number(created.priceBreakdown!.totalPayable),
+              currency: created.priceBreakdown!.currency,
+            })
+          : undefined;
+      return { booking: created, checkout };
     });
 
-    res.status(201).json({ success: true, data: booking });
+    res.status(201).json({
+      success: true,
+      data: {
+        ...bookingResult.booking,
+        ...(bookingResult.checkout ? { checkout: bookingResult.checkout } : {}),
+      },
+    });
   } catch (err) {
     next(err);
   }

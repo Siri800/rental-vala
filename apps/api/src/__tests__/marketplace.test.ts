@@ -80,5 +80,44 @@ describe('Rental Vala Core Business Logic', () => {
       expect(quote.securityDeposit).toBe(5000);
       expect(quote.totalPayable).toBe(12552);
     });
+
+    it('prices appointments by their hourly or daily slot duration', () => {
+      const appointmentPricing = {
+        ...basePricing,
+        hourlyRate: 500,
+        securityDeposit: 0,
+        pickupFee: 0,
+        cleaningOrSetupFee: 0,
+        primaryUnit: 'HOURLY' as const,
+      };
+      const hourlyQuote = PricingService.quote({
+        startDate: new Date('2026-12-01T10:00:00Z'),
+        endDate: new Date('2026-12-01T11:00:00Z'),
+        quantity: 1,
+        fulfillmentMethod: 'PICKUP',
+        listingType: 'APPOINTMENT',
+        appointmentDurationMinutes: 60,
+        pricing: appointmentPricing,
+      });
+
+      expect(hourlyQuote.durationCount).toBe(1);
+      expect(hourlyQuote.pricingUnit).toBe('HOURLY');
+      expect(hourlyQuote.rentalSubtotal).toBe(500);
+      expect(hourlyQuote.totalPayable).toBe(590);
+
+      const dailyQuote = PricingService.quote({
+        startDate: new Date('2026-12-01T10:00:00Z'),
+        endDate: new Date('2026-12-01T18:00:00Z'),
+        quantity: 1,
+        fulfillmentMethod: 'PICKUP',
+        listingType: 'APPOINTMENT',
+        appointmentDurationMinutes: 480,
+        pricing: { ...appointmentPricing, primaryUnit: 'DAILY', dailyRate: 350 },
+      });
+
+      expect(dailyQuote.durationCount).toBe(1);
+      expect(dailyQuote.pricingUnit).toBe('DAILY');
+      expect(dailyQuote.rentalSubtotal).toBe(350);
+    });
   });
 });
